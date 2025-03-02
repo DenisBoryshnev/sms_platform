@@ -1,0 +1,4 @@
+[sms_service]
+url = "http://localhost:4010"  # Адрес сервиса из спецификации
+username = "your_username"     # Имя пользователя
+password = "your_password"     # Пароль

@@ -3,6 +3,11 @@ import argparse
 import socket
 import json
 import base64
+import logging
+
+# Настройка логирования
+logging.basicConfig(filename='sms_client.log', level=logging.INFO, 
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def load_config():
@@ -31,11 +36,6 @@ class HTTPRequest:
         request_line = f"{self.method} {self.url} HTTP/1.1"
         return f"{request_line}\r\n{headers_str}\r\n\r\n{self.body}".encode()
 
-    @classmethod
-    def from_bytes(cls, binary_data):
-        # Реализация преобразования байт в объект HTTPRequest (опционально)
-        pass
-
 
 class HTTPResponse:
     def __init__(self, status_code, headers, body):
@@ -52,46 +52,55 @@ class HTTPResponse:
         headers_dict = dict(line.split(": ", 1) for line in header_lines)
         return cls(status_code, headers_dict, body)
 
-    def to_bytes(self):
-        # Реализация преобразования объекта HTTPResponse в байты (опционально)
-        pass
-
 
 def send_http_request(config, sender, recipient, message):
-    # Подготовка данных
-    url = "/send_sms"  # Эндпоинт из спецификации
-    body = json.dumps({
-        "sender": sender,
-        "recipient": recipient,
-        "message": message
-    })
-    headers = {
-        "Host": "localhost:4010",
-        "Content-Type": "application/json",
-        "Content-Length": str(len(body)),
-        "Authorization": "Basic " + base64.b64encode(
-            f"{config['username']}:{config['password']}".encode()
-        ).decode()
-    }
+    try:
+        url = "/send_sms"
+        body = json.dumps({
+            "sender": sender,
+            "recipient": recipient,
+            "message": message
+        })
+        headers = {
+            "Host": config['server_address'],
+            "Content-Type": "application/json",
+            "Content-Length": str(len(body)),
+            "Authorization": "Basic " + base64.b64encode(
+                f"{config['username']}:{config['password']}".encode()
+            ).decode()
+        }
 
-    # Создание HTTP-запроса
-    request = HTTPRequest("POST", url, headers, body)
+        request = HTTPRequest("POST", url, headers, body)
 
-    # Отправка запроса через socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect(("localhost", 4010))  # Подключение к серверу
-        s.sendall(request.to_bytes())
-        response_data = s.recv(4096)  # Получение ответа
+        server_address, server_port = config['server_address'].split(":")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect((server_address, int(server_port)))
+            s.sendall(request.to_bytes())
 
-    # Обработка ответа
-    response = HTTPResponse.from_bytes(response_data)
-    return response
+            response_data = b""
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                response_data += chunk
+
+        response = HTTPResponse.from_bytes(response_data)
+        return response
+
+    except socket.error as e:
+        logging.error(f"Ошибка подключения к серверу: {e}")
+        return HTTPResponse(500, {}, json.dumps({"error": "Connection error"}))
+    except Exception as e:
+        logging.error(f"Произошла ошибка: {e}")
+        return HTTPResponse(500, {}, json.dumps({"error": "Internal error"}))
 
 
 def main():
     config = load_config()
     args = parse_arguments()
+    logging.info(f"Отправка SMS: отправитель={args.sender}, получатель={args.recipient}, сообщение={args.message}")
     response = send_http_request(config, args.sender, args.recipient, args.message)
+    logging.info(f"Ответ сервера: код={response.status_code}, тело={response.body}")
     print(f"Код ответа: {response.status_code}")
     print(f"Тело ответа: {response.body}")
 
